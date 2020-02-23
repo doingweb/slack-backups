@@ -15,7 +15,8 @@
       "preLaunchTask": "tsc: build - file-crawler/tsconfig.json",
       "outFiles": [
         "${workspaceFolder}/file-crawler/**/*.js"
-      ]
+      ],
+      "internalConsoleOptions": "openOnSessionStart"
     }
   ]
 }

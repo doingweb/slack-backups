@@ -6,6 +6,7 @@
   "license": "MIT",
   "private": true,
   "workspaces": [
-    "slack-backups-viewer"
+    "slack-backups-viewer",
+    "file-crawler"
   ]
 }

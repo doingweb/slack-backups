@@ -1,0 +1,7 @@
+{
+  "name": "slack-backups",
+  "version": "1.0.0",
+  "main": "index.js",
+  "author": "Chris Antes <chris@chrisdoingweb.com>",
+  "license": "MIT"
+}

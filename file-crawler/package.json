@@ -3,10 +3,16 @@
   "version": "1.0.0",
   "license": "MIT",
   "dependencies": {
+    "bull": "^3.13.0",
     "ts-node": "^8.6.2",
     "typescript": "^3.8.2"
   },
   "scripts": {
-    "start": "ts-node index.ts"
+    "start": "ts-node index.ts",
+    "redis": "docker run --name slack-backups-redis --publish 6379:6379 --rm redis:alpine",
+    "arena": "docker run --name slack-backups-arena --publish 4567:4567 --volume $(pwd)/arena.config.json:/opt/arena/src/server/config/index.json --rm mixmaxhq/arena"
+  },
+  "devDependencies": {
+    "@types/bull": "^3.12.0"
   }
 }

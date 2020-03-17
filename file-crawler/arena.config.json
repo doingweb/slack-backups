@@ -1,0 +1,7 @@
+{
+  "queues": [{
+    "name": "slack-backups-file-crawler-download-queue",
+    "hostId": "Slack Backups File Crawler Download Queue",
+    "host": "host.docker.internal"
+  }]
+}

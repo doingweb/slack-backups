@@ -6,6 +6,7 @@
     "@types/levelup": "^4.3.0",
     "bull": "^3.13.0",
     "level": "^6.0.1",
+    "lowdb": "^1.0.0",
     "moment": "^2.24.0",
     "spinnies": "^0.5.1",
     "ts-node": "^8.6.2",

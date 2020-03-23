@@ -4,16 +4,21 @@ import * as url from 'url';
 import * as Queue from 'bull';
 import * as level from 'level';
 import { LevelUp } from 'levelup';
+import * as low from 'lowdb';
+import * as FileSync from 'lowdb/adapters/FileSync';
 import * as moment from 'moment';
 import * as Spinnies from 'spinnies';
 
 // TODO: Pass this in somehow -- command line arg?
 const slackExportPath = '/Users/chris/Downloads/export-test';
-const downloadedFilesPath = path.join(slackExportPath, '.files');
 
+const downloadedFilesPath = path.join(slackExportPath, '.files');
 const downloadConcurrency = 2;
 const fileDownloadQueue = createFileDownloadQueue();
-const db: LevelUp = level(path.join(downloadedFilesPath, 'manifest-db'));
+
+const manifestDb: LevelUp = level(path.join(downloadedFilesPath, 'manifest-db'));
+const problemsDb = low(new FileSync(path.join(downloadedFilesPath, 'problems.json')));
+problemsDb.defaults({ hiddenByLimit: [], failedDownload: [] }).write();
 
 crawl();
 
@@ -69,8 +74,9 @@ async function crawlChannelChatFile(channel: SlackChannel, filePath: string) {
   await Promise.all(messagesWithFiles.map(async message => {
     for (const file of message.files) {
       if (file.mode === 'hidden_by_limit') {
-        const messageTime = moment.unix(parseFloat(message.ts));
-        console.error(`File ${file.id} (in #${channel.name} at ${messageTime.toLocaleString()}) cannot be downloaded because it is hidden by the Free account storage limit.`);
+        reportFileHiddenByLimit(file);
+
+        console.error(`File ${file.id} (in #${channel.name} at ${moment.unix(parseFloat(message.ts)).toLocaleString()}) cannot be downloaded because it is hidden by the Free account storage limit.`);
         continue;
       }
 
@@ -83,6 +89,16 @@ async function crawlChannelChatFile(channel: SlackChannel, filePath: string) {
       });
     }
   }));
+}
+
+function reportFileHiddenByLimit(file: SlackFile) {
+  const hiddenByLimitList = problemsDb.get('hiddenByLimit');
+
+  if (hiddenByLimitList.includes(file.id)) {
+    return;
+  }
+
+  hiddenByLimitList.push(file.id).write();
 }
 
 async function getChannels() {
@@ -111,7 +127,7 @@ async function processDownload(job: Queue.Job<FileDownloadJobData>) {
 
   // Check database for existence
   try {
-    await db.get(file.id); // Not throwing means the record exists
+    await manifestDb.get(file.id); // Not throwing means the record exists
     return { status: JobStatus.AlreadyDownloaded };
   } catch (error) {
     if (error.name !== 'NotFoundError') {
@@ -125,7 +141,8 @@ async function processDownload(job: Queue.Job<FileDownloadJobData>) {
   // TODO: Pick up here
   debugger;
 
-  // Download each in series (reporting progress along the way)
+  // Download each in series (reporting progress along the way).
+  // Report non-downloadable files in the `problemsDb` (and throw to fail the job).
   for (let i = 1; i <= 5; i++) {
     await wait(1);
     await job.progress(i * 20);

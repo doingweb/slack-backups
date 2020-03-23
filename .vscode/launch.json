@@ -16,7 +16,7 @@
       "outFiles": [
         "${workspaceFolder}/file-crawler/**/*.js"
       ],
-      "internalConsoleOptions": "openOnSessionStart"
+      "console": "integratedTerminal"
     }
   ]
 }

@@ -1,12 +1,19 @@
 import * as path from 'path';
 import { promises as fs } from 'fs';
+import * as url from 'url';
 import * as Queue from 'bull';
+import * as level from 'level';
+import { LevelUp } from 'levelup';
+import * as moment from 'moment';
+import * as Spinnies from 'spinnies';
 
 // TODO: Pass this in somehow -- command line arg?
 const slackExportPath = '/Users/chris/Downloads/export-test';
+const downloadedFilesPath = path.join(slackExportPath, '.files');
 
 const downloadConcurrency = 2;
 const fileDownloadQueue = createFileDownloadQueue();
+const db: LevelUp = level(path.join(downloadedFilesPath, 'manifest-db'));
 
 crawl();
 
@@ -22,15 +29,7 @@ async function crawl() {
     fileDownloadQueue.on('drained', resolve);
   });
 
-  fileDownloadQueue.on('success', (job: FileDownloadJobData) => {
-    console.log(`Success from queue: ${job.file.id}`);
-  });
-
-  // DEBUG
-  fileDownloadQueue.on('progress', (job: Queue.Job, progress: number) => {
-    // TODO: Something nicer? How to do bars?
-    console.log(`Progress on job ${job.id} (${job.data.name}) -- ${progress}`);
-  });
+  setUpProgressMonitoring(fileDownloadQueue);
 
   await Promise.all(
     channels.map(crawlChannel)
@@ -53,8 +52,7 @@ async function crawlChannel(channel: SlackChannel) {
   // DEBUG: Change back to const when limit removed.
   let channelChatFilenames = await fs.readdir(channelDirPath, 'utf-8');
 
-  // DEBUG: Limit to this one interesting day.
-  // TODO: Also test against an older day, to ensure we gracefully handle `hidden_by_limit`.
+  // DEBUG: Limit to this couple of interesting days.
   channelChatFilenames = channelChatFilenames.filter(f => f.includes('2019-12-11') || f.includes('2019-07-04'));
 
   await Promise.all(
@@ -71,22 +69,18 @@ async function crawlChannelChatFile(channel: SlackChannel, filePath: string) {
   await Promise.all(messagesWithFiles.map(async message => {
     for (const file of message.files) {
       if (file.mode === 'hidden_by_limit') {
-        const messageTime = new Date(parseFloat(message.ts) * 1000);
+        const messageTime = moment.unix(parseFloat(message.ts));
         console.error(`File ${file.id} (in #${channel.name} at ${messageTime.toLocaleString()}) cannot be downloaded because it is hidden by the Free account storage limit.`);
         continue;
       }
 
-      console.log(`Queuein' file ${file.id} 🇬🇧`);
-
-      const job = await fileDownloadQueue.add({
-        name: getNewFilePathParts(file, channel).join(' / '),
-        newFilePathAbsolute: path.join(slackExportPath, '.files', ...getNewFilePathParts(file, channel)),
+      // TODO: Handling async efficiently here? Each additional file in a message has to wait for the previous one to be added to the queue.
+      await fileDownloadQueue.add({
+        name: path.join(getNewDirectoryPath(file, channel), file.name).split('/').join(' / '),
         channel,
         message,
         file
       });
-
-      console.log(`Queued job ${job.id}`);
     }
   }));
 }
@@ -107,34 +101,181 @@ async function getObjectsFromFile<T>(filePath: string): Promise<T[]> {
 function createFileDownloadQueue() {
   const queue = new Queue<FileDownloadJobData>('slack-backups-file-crawler-download-queue');
 
-  queue.process(downloadConcurrency, async job => {
-    // TODO: Actual downloading
-
-    // Simulate downloading
-    for (let i = 1; i <= 5; i++) {
-      await wait(1);
-      await job.progress(i * 20);
-    }
-
-    return { status: 'success' };
-
-    function wait(seconds: number) {
-      return new Promise(resolve => setTimeout(resolve, seconds * 1000));
-    }
-  });
+  queue.process(downloadConcurrency, processDownload);
 
   return queue;
 }
 
-function getNewFilePathParts(file: SlackFile, channel: SlackChannel): Array<string> {
-  const year = new Date(file.timestamp * 1000).getFullYear().toString();
-  const filename = `${file.timestamp}-${file.id}-${file.name}`;
+async function processDownload(job: Queue.Job<FileDownloadJobData>) {
+  const { data: { channel, file } } = job;
 
-  return [
-    year,
-    channel.name,
-    filename
-  ];
+  // Check database for existence
+  try {
+    await db.get(file.id); // Not throwing means the record exists
+    return { status: JobStatus.AlreadyDownloaded };
+  } catch (error) {
+    if (error.name !== 'NotFoundError') {
+      throw error;
+    }
+  }
+
+  // Enumerate exact files to download
+  const urlsToDownload = getDownloadArgsList(file, channel);
+
+  // TODO: Pick up here
+  debugger;
+
+  // Download each in series (reporting progress along the way)
+  for (let i = 1; i <= 5; i++) {
+    await wait(1);
+    await job.progress(i * 20);
+  }
+  function wait(seconds: number) {
+    return new Promise(resolve => setTimeout(resolve, seconds * 1000));
+  }
+
+  // Stop all the downloading (verify files?)
+
+  // Write to database
+
+  return { status: JobStatus.Success };
+}
+
+/**
+ * Builds a list of all the information needed to download the file and its derivatives
+ *
+ * @param {SlackFile} file
+ * @returns {string[]}
+ */
+function getDownloadArgsList(file: SlackFile, channel: SlackChannel): FileDownloadArgs[] {
+  const newDirectoryPath = getNewDirectoryPath(file, channel);
+  const downloads = [];
+  downloads.push({
+    url: file.url_private, // TODO: Or is it 'url_private_download'?
+    localPath: path.join(downloadedFilesPath, newDirectoryPath, getNewFilename(getFilenameFromUrl(file.url_private), file))
+  });
+
+  const derivativeKeys = getDerivativeUrlKeysForFiletype(file.filetype);
+  for (const key of derivativeKeys) {
+    downloads.push({
+      url: file[key],
+      localPath: path.join(
+        downloadedFilesPath,
+        newDirectoryPath,
+        key,
+        getNewFilename(getFilenameFromUrl(file[key]), file)
+      )
+    })
+  }
+
+  return downloads;
+}
+
+function getFilenameFromUrl(u: string) {
+  return path.basename(url.parse(u).pathname);
+}
+
+interface FileDownloadArgs {
+  url: string,
+  localPath: string,
+}
+
+enum JobStatus {
+  Success = 'Success', // The file was successfully downloaded
+  AlreadyDownloaded = 'Already Downloaded', // The file had already been downloaded
+}
+
+/**
+ * A file we were about to download had already been downloaded, but there was no record in the database.
+ *
+ * @class FileExistsError
+ * @extends {Error}
+ */
+class FileExistsError extends Error {}
+
+/**
+ * Gets the keys for a given filetype that contain the URLs of derivative files that we want to download
+ */
+function getDerivativeUrlKeysForFiletype(filetype: string) {
+  switch (filetype) {
+    case 'jpg':
+      return [
+        'thumb_64',
+        'thumb_80',
+        'thumb_160',
+        'thumb_360',
+        'thumb_480',
+        'thumb_720',
+        'thumb_800',
+        'thumb_960',
+        'thumb_1024',
+      ];
+    case 'mp4':
+    case 'mov':
+      return [
+        'thumb_video',
+      ];
+    case 'gif':
+      return [
+        'thumb_64',
+        'thumb_80',
+        'thumb_360',
+        'thumb_480',
+        'thumb_160',
+        'thumb_360_gif',
+        'thumb_480_gif',
+        'deanimate_gif',
+      ];
+    default:
+      throw new Error(`Unrecognized filetype: ${filetype}`);
+  }
+}
+
+/**
+ * Gets the relative path in the repository where the given file should live.
+ *
+ * @param {SlackFile} file
+ * @param {SlackChannel} channel
+ * @returns {string} The relative path.
+ */
+function getNewDirectoryPath(file: SlackFile, channel: SlackChannel): string {
+  const year = moment.unix(file.timestamp).year();
+
+  return path.join(year.toString(), channel.name);
+}
+
+/**
+ * Generates the new filename that we save in our repository.
+ *
+ * Filename is also included, since it may be for a derivative.
+ *
+ * @param {string} filename The name of the file on Slack's server.
+ * @param {SlackFile} file The file object, which contains the original and derivatives.
+ * @returns
+ */
+function getNewFilename(filename: string, file: SlackFile) {
+  const fileTime = moment.unix(file.timestamp);
+  return `${fileTime.format('YYYYMMDDHHmmss')}-${file.id}-${filename}`;
+}
+
+function setUpProgressMonitoring(queue: Queue.Queue<FileDownloadJobData>) {
+  const spinnies = new Spinnies();
+
+  queue.on('active', job => {
+    spinnies.add(job.id, { text: spinnerText(job) });
+  });
+
+  queue.on('progress', (job, progress: number) => {
+    spinnies.update(job.id, { text: spinnerText(job, progress) });
+  });
+
+  queue.on('completed', job => {
+    spinnies.succeed(job.id);
+  });
+
+  function spinnerText(job: Queue.Job<FileDownloadJobData>, progress = 0) {
+    return `${progress}% [Job ${job.id}] ${job.data.name}`;
+  }
 }
 
 interface SlackChannel {
@@ -177,10 +318,13 @@ type SlackVideoFile = SlackFile & {
 
 interface FileDownloadJobData {
   name: string,
-  newFilePathAbsolute: string,
   file: SlackFile,
   message: SlackMessage,
   channel: SlackChannel
+}
+
+interface DownloadedFile {
+  original: string, // Relative path to the downloaded copy of the original file
 }
 /*
 PROPOSAL:
@@ -192,14 +336,14 @@ At the top level of that directory, store a JSON (or whatever) database that map
 {
   "FNMKFC99V": {
     "original": "2019/finn-pics/1568995684-FNMKFC99V-image_from_ios.jpg",
-    "thumb_64": "2019/finn-pics/1568995684-FNMKFC99V-image_from_ios_64.jpg",
+    "thumb_64": "2019/finn-pics/thumb_64/1568995684-FNMKFC99V-image_from_ios.jpg",
     ...
   }
 }
 ```
 
 Side note 1: Should we actually store thumbnails? How would they be used?
-  Could we get by generating them on-the-fly? Think about the case of videos especially.
+  Could we get by generating them on-the-fly? Or maybe just save them -- think about the case of videos especially.
 
 Side note 2: Could we just have it store filenames, since a given file should have only one (determinable,
   given channel and file data) year-channel-timestamp-id combination?

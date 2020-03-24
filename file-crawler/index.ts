@@ -1,11 +1,13 @@
 import * as path from 'path';
-import { promises as fs } from 'fs';
-import * as url from 'url';
+import { promises as fs, createWriteStream } from 'fs';
+import { parse as urlParse } from 'url';
+import Axios from 'axios';
 import * as Queue from 'bull';
 import * as level from 'level';
 import { LevelUp } from 'levelup';
 import * as low from 'lowdb';
 import * as FileSync from 'lowdb/adapters/FileSync';
+import * as mkdirp from 'mkdirp';
 import * as moment from 'moment';
 import * as Spinnies from 'spinnies';
 
@@ -136,26 +138,93 @@ async function processDownload(job: Queue.Job<FileDownloadJobData>) {
   }
 
   // Enumerate exact files to download
-  const urlsToDownload = getDownloadArgsList(file, channel);
-
-  // TODO: Pick up here
-  debugger;
+  const downloadables = getDownloadArgsList(file, channel);
+  const pathsDownloaded = [];
 
   // Download each in series (reporting progress along the way).
-  // Report non-downloadable files in the `problemsDb` (and throw to fail the job).
-  for (let i = 1; i <= 5; i++) {
-    await wait(1);
-    await job.progress(i * 20);
+  // Report non-downloadable files in the `problemsDb` (and throw to fail the job???).
+  // TODO: Refactor all this
+  for (const [index, {url, localPath}] of downloadables.entries()) {
+    const { data, headers, status, statusText } = await Axios({
+      url,
+      responseType: 'stream'
+    });
+
+    // TODO: Report problem and continue if status not 200?
+
+    const totalDownloadSize = parseInt(headers['content-length']);
+    let downloadedSize = 0;
+
+    try {
+      const existingFileStats = await fs.stat(localPath);
+      if (existingFileStats.size === totalDownloadSize) {
+        // The file has been downloaded already
+        console.log(`😎 Already downloaded ${localPath}`);
+        continue;
+      }
+      // If the size doesn't match, it probably means the download was interrupted. Re-download it.
+    } catch (error) {
+      // ENOENT means the file doesn't exist, which is fine; we'll go ahead and download it.
+      if (error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+
+    await mkdirp(path.dirname(localPath));
+    const writer = createWriteStream(localPath);
+    data.on('data', chunk => {
+      downloadedSize += chunk.length;
+      const downloadRatio = downloadedSize / totalDownloadSize;
+      const singleFileProportion = 1 / downloadables.length;
+      const progressFromFilesAlreadyDownloaded = singleFileProportion * index;
+      const progress = (progressFromFilesAlreadyDownloaded + (downloadRatio * singleFileProportion)) * 100;
+
+      job.progress(progress);
+    });
+
+    data.pipe(writer);
+
+    try {
+      await new Promise((resolve, reject) => {
+        writer.on('finish', resolve)
+        writer.on('error', reject)
+      });
+    }
+    catch (error) {
+      problemsDb.get('failedDownload')
+        .push({
+          url,
+          localPath,
+          error
+        })
+        .write();
+
+      console.error(error);
+      continue;
+    }
+
+    // Stop all the downloading (verify file)
+    const downloadedFileStats = await fs.stat(localPath);
+    if (downloadedFileStats.size !== totalDownloadSize) {
+      problemsDb.get('failedDownload')
+        .push({
+          url,
+          localPath,
+          error: { message: 'Local file size did not match.' }
+        })
+        .write();
+      continue;
+    }
+
+    // Write to database
+    // TODO: Switch to lowdb from level? Would be nice to be able to see what gets produced and be able to diff it etc.
+
+    pathsDownloaded.push(localPath);
+
+    console.log(`🎉 Successfully downloaded ${localPath}`);
   }
-  function wait(seconds: number) {
-    return new Promise(resolve => setTimeout(resolve, seconds * 1000));
-  }
 
-  // Stop all the downloading (verify files?)
-
-  // Write to database
-
-  return { status: JobStatus.Success };
+  return { status: JobStatus.Success, pathsDownloaded };
 }
 
 /**
@@ -168,7 +237,7 @@ function getDownloadArgsList(file: SlackFile, channel: SlackChannel): FileDownlo
   const newDirectoryPath = getNewDirectoryPath(file, channel);
   const downloads = [];
   downloads.push({
-    url: file.url_private, // TODO: Or is it 'url_private_download'?
+    url: file.url_private,
     localPath: path.join(downloadedFilesPath, newDirectoryPath, getNewFilename(getFilenameFromUrl(file.url_private), file))
   });
 
@@ -189,7 +258,7 @@ function getDownloadArgsList(file: SlackFile, channel: SlackChannel): FileDownlo
 }
 
 function getFilenameFromUrl(u: string) {
-  return path.basename(url.parse(u).pathname);
+  return path.basename(urlParse(u).pathname);
 }
 
 interface FileDownloadArgs {

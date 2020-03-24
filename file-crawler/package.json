@@ -4,9 +4,11 @@
   "license": "MIT",
   "dependencies": {
     "@types/levelup": "^4.3.0",
+    "axios": "^0.19.2",
     "bull": "^3.13.0",
     "level": "^6.0.1",
     "lowdb": "^1.0.0",
+    "mkdirp": "^1.0.3",
     "moment": "^2.24.0",
     "spinnies": "^0.5.1",
     "ts-node": "^8.6.2",

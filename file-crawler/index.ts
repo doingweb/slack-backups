@@ -3,8 +3,6 @@ import { promises as fs, createWriteStream } from 'fs';
 import { parse as urlParse } from 'url';
 import Axios from 'axios';
 import * as Queue from 'bull';
-import * as level from 'level';
-import { LevelUp } from 'levelup';
 import * as low from 'lowdb';
 import * as FileSync from 'lowdb/adapters/FileSync';
 import * as mkdirp from 'mkdirp';
@@ -18,8 +16,10 @@ const downloadedFilesPath = path.join(slackExportPath, '.files');
 const downloadConcurrency = 2;
 const fileDownloadQueue = createFileDownloadQueue();
 
-const manifestDb: LevelUp = level(path.join(downloadedFilesPath, 'manifest-db'));
+mkdirp.sync(downloadedFilesPath);
+const manifestDb = low(new FileSync(path.join(downloadedFilesPath, 'manifest.json')));
 const problemsDb = low(new FileSync(path.join(downloadedFilesPath, 'problems.json')));
+manifestDb.defaults({}).write();
 problemsDb.defaults({ hiddenByLimit: [], failedDownload: [] }).write();
 
 crawl();
@@ -94,13 +94,15 @@ async function crawlChannelChatFile(channel: SlackChannel, filePath: string) {
 }
 
 function reportFileHiddenByLimit(file: SlackFile) {
-  const hiddenByLimitList = problemsDb.get('hiddenByLimit');
+  const hiddenByLimitList = problemsDb.get('hiddenByLimit').value();
 
   if (hiddenByLimitList.includes(file.id)) {
     return;
   }
 
-  hiddenByLimitList.push(file.id).write();
+  problemsDb.get('hiddenByLimit')
+    .push(file.id)
+    .write();
 }
 
 async function getChannels() {
@@ -128,13 +130,9 @@ async function processDownload(job: Queue.Job<FileDownloadJobData>) {
   const { data: { channel, file } } = job;
 
   // Check database for existence
-  try {
-    await manifestDb.get(file.id); // Not throwing means the record exists
+  let fileManifestRecord = manifestDb.get(file.id).value();
+  if (fileManifestRecord) {
     return { status: JobStatus.AlreadyDownloaded };
-  } catch (error) {
-    if (error.name !== 'NotFoundError') {
-      throw error;
-    }
   }
 
   // Enumerate exact files to download
@@ -144,7 +142,7 @@ async function processDownload(job: Queue.Job<FileDownloadJobData>) {
   // Download each in series (reporting progress along the way).
   // Report non-downloadable files in the `problemsDb` (and throw to fail the job???).
   // TODO: Refactor all this
-  for (const [index, {url, localPath}] of downloadables.entries()) {
+  for (const [index, {url, localPath, derivativeKey}] of downloadables.entries()) {
     const { data, headers, status, statusText } = await Axios({
       url,
       responseType: 'stream'
@@ -158,7 +156,13 @@ async function processDownload(job: Queue.Job<FileDownloadJobData>) {
     try {
       const existingFileStats = await fs.stat(localPath);
       if (existingFileStats.size === totalDownloadSize) {
-        // The file has been downloaded already
+        problemsDb.get('failedDownload')
+          .push({
+            reason: 'Already downloaded but not in the manifest',
+            url,
+            localPath
+          })
+          .write();
         console.log(`😎 Already downloaded ${localPath}`);
         continue;
       }
@@ -193,6 +197,7 @@ async function processDownload(job: Queue.Job<FileDownloadJobData>) {
     catch (error) {
       problemsDb.get('failedDownload')
         .push({
+          reason: 'Local fs write stream error',
           url,
           localPath,
           error
@@ -208,16 +213,24 @@ async function processDownload(job: Queue.Job<FileDownloadJobData>) {
     if (downloadedFileStats.size !== totalDownloadSize) {
       problemsDb.get('failedDownload')
         .push({
+          reason: 'Local file size did not match.',
           url,
-          localPath,
-          error: { message: 'Local file size did not match.' }
+          localPath
         })
         .write();
       continue;
     }
 
     // Write to database
-    // TODO: Switch to lowdb from level? Would be nice to be able to see what gets produced and be able to diff it etc.
+    const relativePath = path.relative(downloadedFilesPath, localPath);
+    fileManifestRecord = manifestDb.get(file.id).value();
+    if (!fileManifestRecord) {
+      manifestDb.set(file.id, {}).write();
+    }
+    manifestDb.update(file.id, fileRecord => Object.assign(
+      fileRecord,
+      derivativeKey ? { [derivativeKey]: relativePath } : { relativePath }
+    )).write();
 
     pathsDownloaded.push(localPath);
 
@@ -244,6 +257,7 @@ function getDownloadArgsList(file: SlackFile, channel: SlackChannel): FileDownlo
   const derivativeKeys = getDerivativeUrlKeysForFiletype(file.filetype);
   for (const key of derivativeKeys) {
     downloads.push({
+      derivativeKey: key,
       url: file[key],
       localPath: path.join(
         downloadedFilesPath,
@@ -264,6 +278,7 @@ function getFilenameFromUrl(u: string) {
 interface FileDownloadArgs {
   url: string,
   localPath: string,
+  derivativeKey?: string,
 }
 
 enum JobStatus {

@@ -25,15 +25,11 @@ setUpProgressMonitoring(fileDownloadQueue);
 const manifestDb = createManifestDb();
 const problemsDb = createProblemsDb();
 
-crawl();
+crawl().then(() => process.exit());
 
 async function crawl() {
-  // DEBUG: Change back to const when limit removed.
-  let channels = await getChannels();
+  const channels = await getChannels();
   const users = await getUsers();
-
-  // DEBUG: Limits to finn-pics
-  channels = channels.filter(c => c.name === 'finn-pics');
 
   await Promise.all(
     channels.map(crawlChannel)
@@ -55,11 +51,7 @@ async function crawl() {
 
 async function crawlChannel(channel: SlackChannel) {
   const channelDirPath = path.join(slackExportPath, channel.name);
-  // DEBUG: Change back to const when limit removed.
-  let channelChatFilenames = await fs.readdir(channelDirPath, 'utf-8');
-
-  // DEBUG: Limit to this couple of interesting days.
-  channelChatFilenames = channelChatFilenames.filter(f => f.includes('2019-12-11') || f.includes('2019-07-04'));
+  const channelChatFilenames = await fs.readdir(channelDirPath, 'utf-8');
 
   await Promise.all(
     channelChatFilenames.map(channelChatFilename =>

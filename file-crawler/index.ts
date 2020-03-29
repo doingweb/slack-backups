@@ -10,8 +10,7 @@ import * as mkdirp from 'mkdirp';
 import * as moment from 'moment';
 import * as Spinnies from 'spinnies';
 
-// TODO: Pass this in somehow -- command line arg?
-const slackExportPath = '/Users/chris/Downloads/export-test';
+const slackExportPath = process.argv[2];
 
 const downloadedFilesPath = path.join(slackExportPath, '.files');
 mkdirp.sync(downloadedFilesPath);

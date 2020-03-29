@@ -12,6 +12,7 @@
         "<node_internals>/**"
       ],
       "program": "${workspaceFolder}/file-crawler/index.ts",
+      "args": ["/Users/chris/Downloads/export-test"],
       "preLaunchTask": "tsc: build - file-crawler/tsconfig.json",
       "outFiles": [
         "${workspaceFolder}/file-crawler/**/*.js"

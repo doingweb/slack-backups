@@ -132,8 +132,8 @@ async function downloadSingleFile(url: string, localPath: string, seriesIndex: n
   const totalDownloadSize = getDownloadSize(downloadStream);
   let downloadedSize = 0;
 
-  if (await fileAlreadyDownloaded(localPath, totalDownloadSize)) {
-    throw new AlreadyDownloadedError(url, localPath);
+  if (await isFileAlreadyDownloaded(localPath, totalDownloadSize)) {
+    return;
   }
 
   await mkdirp(path.dirname(localPath));
@@ -167,7 +167,7 @@ async function downloadSingleFile(url: string, localPath: string, seriesIndex: n
   }
 }
 
-async function fileAlreadyDownloaded(filePath: string, expectedSize: number): Promise<boolean> {
+async function isFileAlreadyDownloaded(filePath: string, expectedSize: number): Promise<boolean> {
   try {
     const stats = await fs.stat(filePath);
     return stats.size === expectedSize;
@@ -247,6 +247,11 @@ function getDownloadArgsList(file: SlackFile, channel: SlackChannel): FileDownlo
 
   const derivativeKeys = getDerivativeUrlKeysForFiletype(file.filetype);
   for (const key of derivativeKeys) {
+    if (!file[key]) {
+      // Sometimes we don't have all the derivatives, and that's okay 🌈
+      continue;
+    }
+
     downloads.push({
       derivativeKey: key,
       url: file[key],
@@ -291,6 +296,7 @@ class FileExistsError extends Error {}
 function getDerivativeUrlKeysForFiletype(filetype: string) {
   switch (filetype) {
     case 'jpg':
+    case 'png':
       return [
         'thumb_64',
         'thumb_80',
@@ -377,9 +383,7 @@ function handleSingleFileDownloadError(error: SingleFileDownloadError) {
     localPath: error.localPath
   };
 
-  if (error instanceof AlreadyDownloadedError) {
-    console.log(`😎 Already downloaded ${error.localPath}`);
-  } else if (error instanceof FileWriteError) {
+  if (error instanceof FileWriteError) {
     downloadFailureRecord.error = error.innerError;
     console.error(error.innerError);
   } else if (error instanceof FileSizeMismatchError) {
@@ -398,13 +402,6 @@ class SingleFileDownloadError extends Error {
   constructor(public url: string, public localPath: string, message: string) {
     super(message);
     Object.setPrototypeOf(this, SingleFileDownloadError.prototype);
-  }
-}
-
-class AlreadyDownloadedError extends SingleFileDownloadError {
-  constructor(public url: string, public localPath: string) {
-    super(url, localPath, 'Already downloaded but not in the manifest.');
-    Object.setPrototypeOf(this, AlreadyDownloadedError.prototype);
   }
 }
 

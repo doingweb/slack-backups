@@ -328,6 +328,8 @@ function getDerivativeUrlKeysForFiletype(filetype: string) {
       return [
         'thumb_pdf',
       ];
+    case 'binary':
+      return [];
     default:
       throw new Error(`Unrecognized filetype: ${filetype}`);
   }

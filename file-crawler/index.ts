@@ -25,16 +25,22 @@ setUpProgressMonitoring(fileDownloadQueue);
 const manifestDb = createManifestDb();
 const problemsDb = createProblemsDb();
 
-crawl().then(() => process.exit());
+main().then(() => process.exit());
+
+async function main() {
+  await crawl();
+  await processQueue();
+}
 
 async function crawl() {
   const channels = await getChannels();
-  const users = await getUsers();
 
   await Promise.all(
     channels.map(crawlChannel)
   );
+}
 
+async function processQueue() {
   if ((await fileDownloadQueue.count()) > 0) {
     await queueDrained;
   }

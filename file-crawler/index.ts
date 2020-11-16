@@ -314,6 +314,7 @@ function getDerivativeUrlKeysForFiletype(filetype: string) {
   switch (filetype) {
     case 'jpg':
     case 'png':
+    case 'heic':
       return [
         'thumb_64',
         'thumb_80',
@@ -345,6 +346,7 @@ function getDerivativeUrlKeysForFiletype(filetype: string) {
       return [
         'thumb_pdf',
       ];
+    case 'svg':
     case 'binary':
       return [];
     default:

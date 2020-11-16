@@ -68,10 +68,15 @@ async function crawlChannelChatFile(channel: SlackChannel, filePath: string) {
 
   await Promise.all(messagesWithFiles.map(async message => {
     await Promise.all(message.files.map(async file => {
-      if (file.mode === 'hidden_by_limit') {
+      switch (file.mode) {
+        case 'hidden_by_limit':
         reportFileHiddenByLimit(file);
         console.error(`File ${file.id} (in #${channel.name} at ${moment.unix(parseFloat(message.ts)).toLocaleString()}) cannot be downloaded because it is hidden by the Free account storage limit.`);
         return;
+        case 'tombstone':
+          reportFileDeleted(file);
+          console.error(`File ${file.id} (in #${channel.name} at ${moment.unix(parseFloat(message.ts)).toLocaleString()}) cannot be downloaded because it was deleted.`);
+          return;
       }
 
       if (manifest[file.id]) {
@@ -198,6 +203,18 @@ function reportFileHiddenByLimit(file: SlackFile) {
     .write();
 }
 
+function reportFileDeleted(file: SlackFile) {
+  const deletedList = problemsDb.get('deleted').value();
+
+  if (deletedList.includes(file.id)) {
+    return;
+  }
+
+  problemsDb.get('deleted')
+    .push(file.id)
+    .write();
+}
+
 async function getChannels() {
   return getObjectsFromFile<SlackChannel>(path.join(slackExportPath, 'channels.json'));
 }
@@ -227,7 +244,7 @@ function createManifestDb() {
 
 function createProblemsDb() {
   const db = low(new FileSync(path.join(downloadedFilesPath, 'problems.json')));
-  db.defaults({ hiddenByLimit: [], failedDownload: [] }).write();
+  db.defaults({ hiddenByLimit: [], deleted: [], failedDownload: [] }).write();
   return db;
 }
 

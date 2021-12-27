@@ -332,8 +332,9 @@ function getDerivativeUrlKeysForFiletype(filetype: string) {
         'thumb_960',
         'thumb_1024',
       ];
-    case 'mp4':
+    case 'mkv':
     case 'mov':
+    case 'mp4':
       return [
         'thumb_video',
       ];

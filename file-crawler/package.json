@@ -7,7 +7,7 @@
     "bull": "^3.13.0",
     "lowdb": "^1.0.0",
     "mkdirp": "^1.0.3",
-    "moment": "^2.24.0",
+    "moment": "^2.29.2",
     "spinnies": "^0.5.1",
     "ts-node": "^8.6.2",
     "typescript": "^3.8.2"

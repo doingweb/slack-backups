@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "license": "MIT",
   "dependencies": {
-    "axios": "^0.19.2",
+    "axios": "^0.21.2",
     "bull": "^3.13.0",
     "lowdb": "^1.0.0",
     "mkdirp": "^1.0.3",

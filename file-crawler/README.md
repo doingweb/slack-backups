@@ -6,25 +6,19 @@ Do a Backup
 
 From your team's "Settings & Permissions" page, click "Import/Export Data", then do an export of whatever you want.
 
-Extract this file and integrate it into your previous backup, taking care not to overwrite the JSON of content that has been hidden by the limit.
+Note: If you're integrating this export into your previous backup copy, take care not to overwrite the references to files that have been hidden by the limit.
 
 Crawl Files
 -----------
 
-Start Redis, which backs the queue:
+Start the queue stuff:
 
 ```console
-npm run redis
+docker compose up
 ```
 
-Optionally, start Arena, to monitor the queue with a nice web UI:
+Run the crawler, providing the paths to your extracted export and where to put the files:
 
 ```console
-npm run arena
-```
-
-Either use the "Launch File Crawler" launch config (setting your path arg), or run it from here, providing the path to your extracted export:
-
-```console
-npm start /absolute/path/to/export/directory
+npm start /path/to/export/directory /path/to/files/destination
 ```

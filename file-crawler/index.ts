@@ -11,8 +11,8 @@ import * as moment from 'moment';
 import * as Spinnies from 'spinnies';
 
 const slackExportPath = process.argv[2];
+const downloadedFilesPath = process.argv[3];
 
-const downloadedFilesPath = path.join(slackExportPath, '.files');
 mkdirp.sync(downloadedFilesPath);
 
 const downloadConcurrency = 2;
@@ -243,7 +243,7 @@ function createFileDownloadQueue() {
 }
 
 function createManifestDb() {
-  const db = low(new FileSync(path.join(downloadedFilesPath, 'manifest.json')));
+  const db = low(new FileSync(path.join(slackExportPath, 'files-manifest.json')));
   db.defaults({}).write();
   return db;
 }

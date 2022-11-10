@@ -13,9 +13,7 @@
     "typescript": "^3.8.2"
   },
   "scripts": {
-    "start": "ts-node index.ts",
-    "redis": "docker run --name slack-backups-redis --publish 6379:6379 --rm redis:alpine",
-    "arena": "docker run --name slack-backups-arena --publish 4567:4567 --volume $(pwd)/arena.config.json:/opt/arena/src/server/config/index.json --rm mixmaxhq/arena"
+    "start": "ts-node index.ts"
   },
   "devDependencies": {
     "@types/bull": "^3.12.0"

@@ -1,0 +1,18 @@
+version: "3.3"
+services:
+  redis:
+    container_name: slack-backups-redis
+    image: redis:alpine
+    ports:
+      - 6379:6379
+    restart: always
+  arena:
+    container_name: slack-backups-arena
+    image: docker-arena # Cloned and built from https://github.com/bee-queue/docker-arena
+    ports:
+      - 4567:4567
+    volumes:
+      - ./arena.config.json:/opt/arena/index.json
+    depends_on:
+      - redis
+    restart: always
